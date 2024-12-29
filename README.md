@@ -7,7 +7,7 @@ support in .NET 8.0+ applications.
 
 OpenWebNet is a protocol developed by [BTicino](https://www.bticino.it/) and [Legrand](https://www.legrand.fr/) around 2000 to manage
 electrical networks. While it uses a very basic wire format initially designed to be usable over PSTN phone lines, the OpenWebNet
-protocol is actually fairly complex to implement properly but also quite powerful.
+protocol is actually fairly complex to implement properly (but also quite powerful!).
 
 To this date, 3 variants of OpenWebNet have been developed by the two companies:
   - OpenWebNet, used to integrate with the [SCS](https://en.wikipedia.org/wiki/Bus_SCS)-based "MyHome" products.
@@ -25,7 +25,7 @@ gateways and a higher-level MQTT integration that can be directly used with home
 > **An OpenWebNet gateway is required by OpenNetty to be able to interact with BTicino and Legrand devices**:
 >
 >   - For In One by Legrand devices, a Legrand 88213 powerline/USB gateway is required. To communicate with
-> In One by Legrand radio devices, a Legrand 03606 interface must also be present in the installation.
+> In One by Legrand radio devices, a Legrand 03606 interface must also be present in the electrical panel.
 >   - For MyHome/MyHome Up devices, both BTicino F454 and MH202 SCS/Ethernet gateways are currently supported.
 >   - For MyHome Play devices, a BTicino 3578 or Legrand 88328 Zigbee/USB gateway is required.
 >
@@ -104,7 +104,7 @@ Compiled binaries can be found in the [opennetty-resources](https://github.com/o
 > Make sure you select the correct architecture when downloading the compiled binaries:
 >   - x64: typically used for bare metal and virtual machines.
 >   - ARM32: compatible with Single Board Computers (like Raspberry PIs) that don't support 64 bits.
->   - ARM64: best used for Single Board Computers that support 64 bits (e.g Raspberry PIs 3+ on which Raspbian 64 bits is installed).
+>   - ARM64: best used with Single Board Computers that support 64 bits (e.g Raspberry PIs 3+ on which Raspbian 64 bits is installed).
 
 First, you'll need to create a folder on the machine that will contain all the files required by OpenNetty: while it can
 be deployed anywhere, a folder under `/usr/local/bin` (e.g `/usr/local/bin/opennetty`) is probably the best option.
@@ -180,7 +180,7 @@ server/port/username/password attributes to match the values used by your MQTT b
 
 OpenNetty requires listing the gateways in the configuration file.
 
-For that, you need to a `Device` node with the correct brand/model attributes for each gateway present in the installation
+For that, you need to add a `Device` node with the correct brand/model attributes for each gateway present in the installation
 and a `Gateway` node containing the gateway details, including its unique name and whether OpenNetty will use a serial or TCP
 socket to initiate OpenWebNet sessions:
 
@@ -222,6 +222,15 @@ For that, you need to a `Device` node with the correct brand/model attributes fo
   - For MyHome Up devices, the area/point attributes must match the values assigned via [MyHome Suite](https://www.homesystems-legrandgroup.com/home?p_p_id=it_smc_bticino_homesystems_search_AutocompletesearchPortlet&p_p_lifecycle=0&p_p_state=normal&p_p_mode=view&_it_smc_bticino_homesystems_search_AutocompletesearchPortlet_journalArticleId=2493426&_it_smc_bticino_homesystems_search_AutocompletesearchPortlet_mvcPath=%2Fview_journal_article_content.jsp).
   - The endpoint name must be chosen carefully as it will be used to infer the MQTT topic used for the endpoint (e.g state changes dispatched
   by an endpoint named `Bedroom/Wall light` will be posted under the `opennetty/bedroom/wall light` MQTT topic).
+
+> [!TIP]
+> You can also add MyHome Up SCS light point area or group endpoints that are not attached to a specific device, which is the most efficient
+> way to execute unique operations targeting multiple devices at the same time (e.g switching on all the lights of a specific room).
+>
+> In this case, the `Endpoint` node MUST NOT appear under a `Device` node and MUST be assigned a list of
+> `Capability` nodes that will define the set of operations that can be executed on the endpoint.
+>
+> You can find the complete list of capabilities in the [`OpenNettyCapabilities.cs`](src/OpenNetty/OpenNettyCapabilities.cs) file.
 
 ```xml
 <Configuration>
@@ -280,6 +289,19 @@ For that, you need to a `Device` node with the correct brand/model attributes fo
     <Endpoint Name="Living room/Wall light 1" Area="1" Point="1" />
     <Endpoint Name="Living room/Wall light 2" Area="1" Point="2" />
   </Device>
+
+  <!-- MyHome Up light point group endpoint -->
+
+  <Endpoint Name="Garden shed/Downlight LEDs" Type="SCS light point group" Group="1">
+    <Capability Name="On/off switching" />
+  </Endpoint>
+
+  <!-- MyHome Up light point area endpoint -->
+
+  <Endpoint Name="Living room/All lights" Type="SCS light point area" Area="8">
+    <Capability Name="Advanced dimming control" />
+    <Capability Name="On/off switching" />
+  </Endpoint>
 
 </Configuration>
 ```
