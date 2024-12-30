@@ -94,14 +94,15 @@ gateway on any x64, ARM32 or ARM64 Linux distribution that supports .NET 8.0 and
 
 ### Deploy the daemon
 
-Compiled binaries can be found in the [opennetty-resources](https://github.com/opennetty/opennetty-resources) repository, under the releases folder.
+Compiled binaries packaged as .zip archives can be found in the
+[opennetty-resources](https://github.com/opennetty/opennetty-resources) repository, under the releases folder.
 
 > [!NOTE]
-> These binaries are self-contained .NET applications that embed all the required dependencies so you don't
+> These archives are self-contained .NET applications that embed all the required dependencies so you don't
 > have to install any global package on the machine on which OpenNetty is deployed.
 
 > [!TIP]
-> Make sure you select the correct architecture when downloading the compiled binaries:
+> Make sure you select the correct architecture when downloading the archive:
 >   - x64: typically used for bare metal and virtual machines.
 >   - ARM32: compatible with Single Board Computers (like Raspberry PIs) that don't support 64 bits.
 >   - ARM64: best used with Single Board Computers that support 64 bits (e.g Raspberry PIs 3+ on which Raspbian 64 bits is installed).
@@ -117,7 +118,8 @@ sudo mkdir /usr/local/bin/opennetty
 sudo chmod 777 /usr/local/bin/opennetty
 ```
 
-Once created, you can copy the daemon files under `/usr/local/bin/opennetty`. You'll need to make the `opennetty-daemon` file executable:
+Once created, you must copy all the files contained in the `.zip` archive under `/usr/local/bin/opennetty`.
+You'll also need to make the `opennetty-daemon` file executable:
 
 ```bash
 sudo chmod +x /usr/local/bin/opennetty/opennetty-daemon
