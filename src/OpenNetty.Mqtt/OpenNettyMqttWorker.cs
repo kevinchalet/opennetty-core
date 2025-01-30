@@ -251,16 +251,15 @@ public sealed class OpenNettyMqttWorker : IOpenNettyMqttWorker
                                 }
                                 break;
 
-                            case OpenNettyMqttAttributes.SmartMeterPowerCutMode or OpenNettyMqttAttributes.SmartMeterRateType
-                                when operation is OpenNettyMqttOperation.Get:
-                                _ = await _controller.GetSmartMeterInformationAsync(endpoint);
-                                break;
-
                             case OpenNettyMqttAttributes.Scenario when operation is OpenNettyMqttOperation.Set:
                                 switch (message.ConvertPayloadToString()?.ToLowerInvariant())
                                 {
                                     case "action" when endpoint.HasCapability(OpenNettyCapabilities.BasicScenario):
                                         await _controller.DispatchBasicScenarioAsync(endpoint);
+                                        break;
+
+                                    case "down" when endpoint.HasCapability(OpenNettyCapabilities.StopUpDownScenario):
+                                        await _controller.DispatchStopUpDownScenarioAsync(endpoint, OpenNettyModels.Automation.ShutterState.Down);
                                         break;
 
                                     case "on" when endpoint.HasCapability(OpenNettyCapabilities.OnOffScenario):
@@ -270,11 +269,58 @@ public sealed class OpenNettyMqttWorker : IOpenNettyMqttWorker
                                     case "off" when endpoint.HasCapability(OpenNettyCapabilities.OnOffScenario):
                                         await _controller.DispatchOnOffScenarioAsync(endpoint, OpenNettyModels.Lighting.SwitchState.Off);
                                         break;
+
+                                    case "stop" when endpoint.HasCapability(OpenNettyCapabilities.StopUpDownScenario):
+                                        await _controller.DispatchStopUpDownScenarioAsync(endpoint, OpenNettyModels.Automation.ShutterState.Stopped);
+                                        break;
+
+                                    case "up" when endpoint.HasCapability(OpenNettyCapabilities.StopUpDownScenario):
+                                        await _controller.DispatchStopUpDownScenarioAsync(endpoint, OpenNettyModels.Automation.ShutterState.Up);
+                                        break;
                                 }
                                 break;
 
                             case OpenNettyMqttAttributes.SmartMeterIndexes when operation is OpenNettyMqttOperation.Get:
                                 _ = await _controller.GetSmartMeterIndexesAsync(endpoint);
+                                break;
+
+                            case OpenNettyMqttAttributes.SmartMeterPowerCutMode or OpenNettyMqttAttributes.SmartMeterRateType
+                                when operation is OpenNettyMqttOperation.Get:
+                                _ = await _controller.GetSmartMeterInformationAsync(endpoint);
+                                break;
+
+                            case OpenNettyMqttAttributes.ShutterPosition when operation is OpenNettyMqttOperation.Get:
+                                _ = await _controller.GetShutterPositionAsync(endpoint);
+                                break;
+
+                            case OpenNettyMqttAttributes.ShutterPosition when operation is OpenNettyMqttOperation.Set:
+                                if (!ushort.TryParse(message.PayloadSegment, CultureInfo.InvariantCulture, out var position))
+                                {
+                                    throw new InvalidDataException(SR.GetResourceString(SR.ID0075));
+                                }
+
+                                await _controller.SetShutterPositionAsync(endpoint, position);
+                                break;
+
+                            case OpenNettyMqttAttributes.ShutterState when operation is OpenNettyMqttOperation.Get:
+                                _ = await _controller.GetShutterStateAsync(endpoint);
+                                break;
+
+                            case OpenNettyMqttAttributes.ShutterState when operation is OpenNettyMqttOperation.Set:
+                                switch (message.ConvertPayloadToString()?.ToLowerInvariant())
+                                {
+                                    case "close":
+                                        await _controller.MoveShutterUpAsync(endpoint);
+                                        break;
+
+                                    case "open":
+                                        await _controller.MoveShutterDownAsync(endpoint);
+                                        break;
+
+                                    case "stop":
+                                        await _controller.StopShutterAsync(endpoint);
+                                        break;
+                                }
                                 break;
 
                             case OpenNettyMqttAttributes.SwitchState when operation is OpenNettyMqttOperation.Get:

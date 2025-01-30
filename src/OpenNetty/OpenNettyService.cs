@@ -44,7 +44,6 @@ public class OpenNettyService : IOpenNettyService
         OpenNettyAddress? address = null,
         OpenNettyMedium? medium = null,
         OpenNettyMode? mode = null,
-        Func<OpenNettyDimension, ValueTask<bool>>? filter = null,
         OpenNettyGateway? gateway = null,
         OpenNettyTransmissionOptions options = OpenNettyTransmissionOptions.None,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -82,7 +81,7 @@ public class OpenNettyService : IOpenNettyService
 
         // Monitor ACKNOWLEDGEMENT and DIMENSION READ replies received by generic and command sessions.
         var notifications = _pipeline.Where(notification => notification.Gateway == gateway)
-            .SelectMany(async notification => notification switch
+            .SelectMany(notification => notification switch
             {
                 OpenNettyNotifications.MessageReceived {
                     Session: { Protocol: OpenNettyProtocol.Scs, Type: OpenNettySessionType.Command } session,
@@ -96,8 +95,7 @@ public class OpenNettyService : IOpenNettyService
                     Message: { Type     : OpenNettyMessageType.DimensionRead,
                                Address  : not null,
                                Dimension: not null } message }
-                    // Note: if a filter was not explicitly set, filter out dimensions that don't match the requested one.
-                    when message.Protocol == protocol && (filter is null || await filter(message.Dimension.Value))
+                    when message.Protocol == protocol && message.Dimension == dimension
                         => AsyncObservable.Return<(OpenNettySession Session, OpenNettyMessage Message)>((session, message)),
 
                 OpenNettyNotifications.MessageReceived {
@@ -113,8 +111,7 @@ public class OpenNettyService : IOpenNettyService
                     Message: { Type     : OpenNettyMessageType.DimensionRead,
                                Address  : not null,
                                Dimension: not null } message }
-                    // Note: if a filter was not explicitly set, filter out dimensions that don't match the requested one.
-                    when message.Protocol == protocol && (filter is null || await filter(message.Dimension.Value))
+                    when message.Protocol == protocol && message.Dimension == dimension
                         => AsyncObservable.Return<(OpenNettySession Session, OpenNettyMessage Message)>((session, message)),
 
                 _ => AsyncObservable.Empty<(OpenNettySession Session, OpenNettyMessage Message)>()
@@ -337,7 +334,6 @@ public class OpenNettyService : IOpenNettyService
         OpenNettyAddress? address = null,
         OpenNettyMedium? medium = null,
         OpenNettyMode? mode = null,
-        Func<OpenNettyDimension, ValueTask<bool>>? filter = null,
         OpenNettyGateway? gateway = null,
         OpenNettyTransmissionOptions options = OpenNettyTransmissionOptions.None,
         CancellationToken cancellationToken = default)
@@ -367,24 +363,20 @@ public class OpenNettyService : IOpenNettyService
         // Monitor ACKNOWLEDGEMENT and DIMENSION READ replies sent by the same address
         // as the message was sent to and received by generic and command sessions.
         var notifications = _pipeline.Where(notification => notification.Gateway == gateway)
-            .SelectMany(async notification => notification switch
+            .SelectMany(notification => notification switch
             {
                 OpenNettyNotifications.MessageReceived {
                     Session: { Protocol : OpenNettyProtocol.Scs, Type: OpenNettySessionType.Command } session,
                     Message: { Type     : OpenNettyMessageType.DimensionRead,
                                Dimension: not null } message }
-                    when message.Protocol == protocol && message.Address == address &&
-                        // Note: if a filter was not explicitly set, filter out dimensions that don't match the requested one.
-                        (filter is not null ? await filter(message.Dimension.Value) : message.Dimension.Value == dimension)
+                    when message.Protocol == protocol && message.Address == address && message.Dimension == dimension
                         => AsyncObservable.Return<(OpenNettySession Session, OpenNettyMessage Message)>((session, message)),
 
                 OpenNettyNotifications.MessageReceived {
                     Session: { Protocol : OpenNettyProtocol.Nitoo or OpenNettyProtocol.Zigbee, Type: OpenNettySessionType.Generic } session,
                     Message: { Type     : OpenNettyMessageType.DimensionRead,
                                Dimension: not null } message }
-                    when message.Protocol == protocol && message.Address == address &&
-                        // Note: if a filter was not explicitly set, filter out dimensions that don't match the requested one.
-                        (filter is not null ? await filter(message.Dimension.Value) : message.Dimension.Value == dimension)
+                    when message.Protocol == protocol && message.Address == address && message.Dimension == dimension
                         => AsyncObservable.Return<(OpenNettySession Session, OpenNettyMessage Message)>((session, message)),
 
                 _ => AsyncObservable.Empty<(OpenNettySession Session, OpenNettyMessage Message)>()

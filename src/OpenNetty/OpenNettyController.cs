@@ -297,6 +297,41 @@ public class OpenNettyController
     }
 
     /// <summary>
+    /// Dispatches a virtual STOP/UP/DOWN scenario for the specified endpoint.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="state">The state.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> that can be used to monitor the asynchronous operation.</returns>
+    public virtual ValueTask DispatchStopUpDownScenarioAsync(
+        OpenNettyEndpoint endpoint,
+        OpenNettyModels.Automation.ShutterState state,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.StopUpDownScenario))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        return _service.ExecuteCommandAsync(
+            protocol         : endpoint.Protocol,
+            command          : state switch
+            {
+                OpenNettyModels.Automation.ShutterState.Stopped => OpenNettyCommands.Automation.Stop,
+                OpenNettyModels.Automation.ShutterState.Up      => OpenNettyCommands.Automation.Up,
+                                     _                          => OpenNettyCommands.Automation.Down
+            },
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : OpenNettyMode.Broadcast,
+            gateway          : endpoint.Gateway,
+            options          : OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
     /// Dispatches a virtual timed scenario for the specified endpoint.
     /// </summary>
     /// <param name="endpoint">The endpoint.</param>
@@ -382,42 +417,61 @@ public class OpenNettyController
     {
         ArgumentNullException.ThrowIfNull(endpoint);
 
-        return endpoint.Protocol switch
+        if (endpoint.Protocol is OpenNettyProtocol.Nitoo)
         {
-            OpenNettyProtocol.Nitoo
-                when endpoint.HasCapability(OpenNettyCapabilities.BasicDimmingState) ||
-                     endpoint.HasCapability(OpenNettyCapabilities.AdvancedDimmingState)
-                => await GetUnitDescriptionAsync(endpoint, cancellationToken) switch
-                {
-                    { FunctionCode: 143, Values: [{ Length: > 0 } value, ..] }
-                        => (ushort) Math.Round(decimal.Parse(value, CultureInfo.InvariantCulture)),
+            if (!endpoint.HasCapability(OpenNettyCapabilities.BasicDimmingState) &&
+                !endpoint.HasCapability(OpenNettyCapabilities.AdvancedDimmingState))
+            {
+                throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+            }
 
-                    _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
-                },
+            return await GetUnitDescriptionAsync(endpoint, cancellationToken) switch
+            {
+                { FunctionCode: 143, Values: [{ Length: > 0 } value, ..] }
+                    => (ushort) Math.Round(decimal.Parse(value, CultureInfo.InvariantCulture)),
 
-            OpenNettyProtocol.Scs or OpenNettyProtocol.Zigbee
-                when endpoint.HasCapability(OpenNettyCapabilities.AdvancedDimmingState)
-                => await _service.GetDimensionAsync(
-                    protocol         : endpoint.Protocol,
-                    dimension        : OpenNettyDimensions.Lighting.DimmerLevelSpeed,
-                    address          : endpoint.Address,
-                    medium           : endpoint.Medium,
-                    mode             : null,
-                    filter           : static dimension => ValueTask.FromResult(
-                        dimension == OpenNettyDimensions.Lighting.DimmerLevelSpeed ||
-                        dimension == OpenNettyDimensions.Lighting.DimmerStatus),
+                _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
+            };
+        }
+
+        else
+        {
+            if (endpoint.HasCapability(OpenNettyCapabilities.AdvancedDimmingState))
+            {
+                // Note: while the brightness level is requested using the "DIMMER SPEED/LEVEL" DIMENSION, the result
+                // might be returned using a different DIMENSION, "DIMMER STATUS". To ensure the brightness is
+                // correctly resolved, both dimensions are observed before sending the DIMENSION REQUEST.
+                var dimensions = _service.ObserveDimensionsAsync(endpoint.Protocol, OpenNettyCategories.Lighting, endpoint.Gateway)
+                    .Where(static arguments => arguments.Dimension == OpenNettyDimensions.Lighting.DimmerLevelSpeed ||
+                                               arguments.Dimension == OpenNettyDimensions.Lighting.DimmerStatus)
+                    .Where(arguments => arguments.Address == endpoint.Address)
+                    .Replay();
+
+                // Connect the observable just before sending the command to ensure
+                // the dimensions are not missed due to a race condition.
+                await using var connection = await dimensions.ConnectAsync();
+
+                await _service.SendMessageAsync(
+                    message          : OpenNettyMessage.CreateDimensionRequest(
+                        protocol : endpoint.Protocol,
+                        dimension: OpenNettyDimensions.Lighting.DimmerLevelSpeed,
+                        address  : endpoint.Address,
+                        medium   : endpoint.Medium,
+                        mode     : null),
                     gateway          : endpoint.Gateway,
                     options          : OpenNettyTransmissionOptions.None,
-                    cancellationToken: cancellationToken) switch
-                    {
-                        [{ Length: > 0 } value, ..] => (ushort) (ushort.Parse(value, CultureInfo.InvariantCulture) - 100),
+                    cancellationToken: cancellationToken);
 
-                        _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
-                    },
+                return await dimensions
+                    .Select(static arguments => (ushort) (ushort.Parse(arguments.Values[0], CultureInfo.InvariantCulture) - 100))
+                    .FirstOrDefault()
+                    .Timeout(TimeSpan.FromSeconds(3))
+                    .RunAsync(cancellationToken);
+            }
 
-            OpenNettyProtocol.Scs or OpenNettyProtocol.Zigbee
-                when endpoint.HasCapability(OpenNettyCapabilities.BasicDimmingState)
-                => await _service.GetStatusAsync(
+            else if (endpoint.HasCapability(OpenNettyCapabilities.BasicDimmingState))
+            {
+                return await _service.GetStatusAsync(
                     protocol         : endpoint.Protocol,
                     category         : OpenNettyCategories.Lighting,
                     address          : endpoint.Address,
@@ -452,10 +506,11 @@ public class OpenNettyController
                         var command when command == OpenNettyCommands.Lighting.On100 => 100,
 
                         _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
-                    },
+                    };
+            }
+        }
 
-            _ => throw new InvalidOperationException(SR.GetResourceString(SR.ID0076))
-        };
+        throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
     }
 
     /// <summary>
@@ -484,7 +539,6 @@ public class OpenNettyController
             address          : endpoint.Address,
             medium           : endpoint.Medium,
             mode             : null,
-            filter           : null,
             gateway          : endpoint.Gateway,
             options          : OpenNettyTransmissionOptions.None,
             cancellationToken: cancellationToken);
@@ -531,7 +585,6 @@ public class OpenNettyController
             address          : endpoint.Address,
             medium           : endpoint.Medium,
             mode             : OpenNettyMode.Unicast,
-            filter           : null,
             gateway          : endpoint.Gateway,
             options          : OpenNettyTransmissionOptions.None,
             cancellationToken: cancellationToken);
@@ -682,78 +735,6 @@ public class OpenNettyController
     }
 
     /// <summary>
-    /// Gets the unit description of the specified endpoint.
-    /// </summary>
-    /// <param name="endpoint">The endpoint.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
-    /// <returns>
-    /// A <see cref="ValueTask{TResult}"/> that can be used to monitor the asynchronous operation
-    /// and whose result returns the unit description of the specified endpoint.
-    /// </returns>
-    public virtual async ValueTask<OpenNettyModels.Diagnostics.UnitDescription> GetUnitDescriptionAsync(
-        OpenNettyEndpoint endpoint,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(endpoint);
-
-        if (!endpoint.HasCapability(OpenNettyCapabilities.UnitDescription))
-        {
-            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
-        }
-
-        var values = await _service.GetDimensionAsync(
-            protocol         : endpoint.Protocol,
-            dimension        : OpenNettyDimensions.Diagnostics.UnitDescription,
-            address          : endpoint.Address,
-            medium           : endpoint.Medium,
-            mode             : OpenNettyMode.Unicast,
-            filter           : null,
-            gateway          : endpoint.Gateway,
-            options          : OpenNettyTransmissionOptions.None,
-            cancellationToken: cancellationToken);
-
-        return OpenNettyModels.Diagnostics.UnitDescription.CreateFromUnitDescription(values);
-    }
-
-    /// <summary>
-    /// Gets the current uptime of the specified SCS gateway endpoint.
-    /// </summary>
-    /// <param name="endpoint">The endpoint.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
-    /// <returns>
-    /// A <see cref="ValueTask{TResult}"/> that can be used to monitor the asynchronous operation
-    /// and whose result returns the current uptime of the specified SCS gateway endpoint.
-    /// </returns>
-    public virtual async ValueTask<TimeSpan> GetUptimeAsync(
-        OpenNettyEndpoint endpoint,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(endpoint);
-
-        if (!endpoint.HasCapability(OpenNettyCapabilities.Uptime))
-        {
-            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
-        }
-
-        var values = await _service.GetDimensionAsync(
-            protocol         : endpoint.Protocol,
-            dimension        : OpenNettyDimensions.Management.Uptime,
-            address          : endpoint.Address,
-            medium           : endpoint.Medium,
-            mode             : null,
-            filter           : null,
-            gateway          : endpoint.Gateway,
-            options          : OpenNettyTransmissionOptions.None,
-            cancellationToken: cancellationToken);
-
-        return new TimeSpan(
-            days   : int.Parse(values[0], CultureInfo.InvariantCulture),
-            hours  : int.Parse(values[1], CultureInfo.InvariantCulture),
-            minutes: int.Parse(values[2], CultureInfo.InvariantCulture),
-            seconds: int.Parse(values[3], CultureInfo.InvariantCulture));
-    }
-
-    /// <summary>
     /// Gets the smart meter indexes contained in the memory of the specified endpoint.
     /// </summary>
     /// <param name="endpoint">The endpoint.</param>
@@ -779,7 +760,6 @@ public class OpenNettyController
             address          : endpoint.Address,
             medium           : endpoint.Medium,
             mode             : OpenNettyMode.Unicast,
-            filter           : null,
             gateway          : endpoint.Gateway,
             options          : OpenNettyTransmissionOptions.None,
             cancellationToken: cancellationToken);
@@ -814,6 +794,110 @@ public class OpenNettyController
         }
 
         return OpenNettyModels.TemperatureControl.SmartMeterInformation.CreateFromUnitDescription(values);
+    }
+
+    /// <summary>
+    /// Resolves the current shutter position of the specified endpoint.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>
+    /// A <see cref="ValueTask{TResult}"/> that can be used to monitor the asynchronous
+    /// operation and whose result returns the current shutter position of the specified endpoint.
+    /// </returns>
+    public virtual async ValueTask<ushort?> GetShutterPositionAsync(
+        OpenNettyEndpoint endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.AdvancedShutterState))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        return await _service.GetDimensionAsync(
+            protocol         : endpoint.Protocol,
+            dimension        : OpenNettyDimensions.Automation.ShutterStatus,
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : null,
+            gateway          : endpoint.Gateway,
+            options          : OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken) switch
+            {
+                [_, { Length: > 0 } value, ..] => ushort.Parse(value, CultureInfo.InvariantCulture) switch
+                {
+                            0        => 0,
+                            100       => 100,
+                            255       => null,
+                    ushort position => position
+                },
+
+                _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
+            };
+    }
+
+    /// <summary>
+    /// Gets the current shutter state of the specified endpoint.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>
+    /// A <see cref="ValueTask{TResult}"/> that can be used to monitor the asynchronous
+    /// operation and whose result returns the current shutter state of the specified endpoint.
+    /// </returns>
+    public virtual async ValueTask<OpenNettyModels.Automation.ShutterState> GetShutterStateAsync(
+        OpenNettyEndpoint endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.BasicShutterControl))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        return endpoint.Protocol switch
+        {
+            OpenNettyProtocol.Nitoo => await GetUnitDescriptionAsync(endpoint, cancellationToken) switch
+            {
+                { FunctionCode: 139, Values: [{ Length: > 0 } value, ..] } => value switch
+                {
+                    "100" or "102" => OpenNettyModels.Automation.ShutterState.Up,
+                    "0"   or "103" => OpenNettyModels.Automation.ShutterState.Down,
+                           _       => OpenNettyModels.Automation.ShutterState.Stopped
+                },
+
+                _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
+            },
+
+            _ => await _service.GetStatusAsync(
+                protocol         : endpoint.Protocol,
+                category         : OpenNettyCategories.Automation,
+                address          : endpoint.Address,
+                medium           : endpoint.Medium,
+                mode             : null,
+                filter           : static command => ValueTask.FromResult(
+                    command == OpenNettyCommands.Automation.Stop ||
+                    command == OpenNettyCommands.Automation.Up   ||
+                    command == OpenNettyCommands.Automation.Down),
+                gateway          : endpoint.Gateway,
+                options          : OpenNettyTransmissionOptions.None,
+                cancellationToken: cancellationToken) switch
+            {
+                OpenNettyCommand command when command == OpenNettyCommands.Automation.Stop
+                    => OpenNettyModels.Automation.ShutterState.Stopped,
+
+                OpenNettyCommand command when command == OpenNettyCommands.Automation.Up
+                    => OpenNettyModels.Automation.ShutterState.Up,
+
+                OpenNettyCommand command when command == OpenNettyCommands.Automation.Down
+                    => OpenNettyModels.Automation.ShutterState.Down,
+
+                _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
+            }
+        };
     }
 
     /// <summary>
@@ -878,6 +962,76 @@ public class OpenNettyController
     }
 
     /// <summary>
+    /// Gets the unit description of the specified endpoint.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>
+    /// A <see cref="ValueTask{TResult}"/> that can be used to monitor the asynchronous operation
+    /// and whose result returns the unit description of the specified endpoint.
+    /// </returns>
+    public virtual async ValueTask<OpenNettyModels.Diagnostics.UnitDescription> GetUnitDescriptionAsync(
+        OpenNettyEndpoint endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.UnitDescription))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        var values = await _service.GetDimensionAsync(
+            protocol         : endpoint.Protocol,
+            dimension        : OpenNettyDimensions.Diagnostics.UnitDescription,
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : OpenNettyMode.Unicast,
+            gateway          : endpoint.Gateway,
+            options          : OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken);
+
+        return OpenNettyModels.Diagnostics.UnitDescription.CreateFromUnitDescription(values);
+    }
+
+    /// <summary>
+    /// Gets the current uptime of the specified SCS gateway endpoint.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>
+    /// A <see cref="ValueTask{TResult}"/> that can be used to monitor the asynchronous operation
+    /// and whose result returns the current uptime of the specified SCS gateway endpoint.
+    /// </returns>
+    public virtual async ValueTask<TimeSpan> GetUptimeAsync(
+        OpenNettyEndpoint endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.Uptime))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        var values = await _service.GetDimensionAsync(
+            protocol         : endpoint.Protocol,
+            dimension        : OpenNettyDimensions.Management.Uptime,
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : null,
+            gateway          : endpoint.Gateway,
+            options          : OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken);
+
+        return new TimeSpan(
+            days   : int.Parse(values[0], CultureInfo.InvariantCulture),
+            hours  : int.Parse(values[1], CultureInfo.InvariantCulture),
+            minutes: int.Parse(values[2], CultureInfo.InvariantCulture),
+            seconds: int.Parse(values[3], CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
     /// Gets the current water heater state of the specified endpoint.
     /// </summary>
     /// <param name="endpoint">The endpoint.</param>
@@ -910,6 +1064,68 @@ public class OpenNettyController
 
             _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
         };
+    }
+
+    /// <summary>
+    /// Moves the specified shutter endpoint down.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> that can be used to monitor the asynchronous operation.</returns>
+    public virtual ValueTask MoveShutterDownAsync(
+        OpenNettyEndpoint endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.BasicShutterControl))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        return _service.ExecuteCommandAsync(
+            protocol         : endpoint.Protocol,
+            command          : OpenNettyCommands.Automation.Down,
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : null,
+            gateway          : endpoint.Gateway,
+            options          : endpoint.Protocol is OpenNettyProtocol.Nitoo &&
+                endpoint.GetBooleanSetting(OpenNettySettings.ActionValidation) is not false ?
+                OpenNettyTransmissionOptions.RequireActionValidation :
+                OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Moves the specified shutter endpoint up.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> that can be used to monitor the asynchronous operation.</returns>
+    public virtual ValueTask MoveShutterUpAsync(
+        OpenNettyEndpoint endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.BasicShutterControl))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        return _service.ExecuteCommandAsync(
+            protocol         : endpoint.Protocol,
+            command          : OpenNettyCommands.Automation.Up,
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : null,
+            gateway          : endpoint.Gateway,
+            options          : endpoint.Protocol is OpenNettyProtocol.Nitoo &&
+                endpoint.GetBooleanSetting(OpenNettySettings.ActionValidation) is not false ?
+                OpenNettyTransmissionOptions.RequireActionValidation :
+                OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -1235,6 +1451,46 @@ public class OpenNettyController
     }
 
     /// <summary>
+    /// Sets the shutter position of the specified endpoint.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="position">The shutter position, from 0 to 100.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> that can be used to monitor the asynchronous operation.</returns>
+    public virtual ValueTask SetShutterPositionAsync(
+        OpenNettyEndpoint endpoint,
+        ushort position,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (position is > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(position));
+        }
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.AdvancedShutterState))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        return _service.SetDimensionAsync(
+            protocol         : endpoint.Protocol,
+            dimension        : OpenNettyDimensions.Automation.ShutterGoToLevel,
+            values           : endpoint.Protocol switch
+            {
+                OpenNettyProtocol.Zigbee => [     position.ToString(CultureInfo.InvariantCulture)],
+                            _            => ["0", position.ToString(CultureInfo.InvariantCulture)]
+            },
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : null,
+            gateway          : endpoint.Gateway,
+            options          : OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
     /// Sets the water heater setpoint mode that will be applied by the specified endpoint.
     /// </summary>
     /// <param name="endpoint">The endpoint.</param>
@@ -1305,6 +1561,37 @@ public class OpenNettyController
         return _service.ExecuteCommandAsync(
             protocol         : endpoint.Protocol,
             command          : OpenNettyCommands.Lighting.Off,
+            address          : endpoint.Address,
+            medium           : endpoint.Medium,
+            mode             : null,
+            gateway          : endpoint.Gateway,
+            options          : endpoint.Protocol is OpenNettyProtocol.Nitoo &&
+                endpoint.GetBooleanSetting(OpenNettySettings.ActionValidation) is not false ?
+                OpenNettyTransmissionOptions.RequireActionValidation :
+                OpenNettyTransmissionOptions.None,
+            cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Stops the specified shutter endpoint.
+    /// </summary>
+    /// <param name="endpoint">The endpoint.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
+    /// <returns>A <see cref="ValueTask"/> that can be used to monitor the asynchronous operation.</returns>
+    public virtual ValueTask StopShutterAsync(
+        OpenNettyEndpoint endpoint,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        if (!endpoint.HasCapability(OpenNettyCapabilities.BasicShutterControl))
+        {
+            throw new InvalidOperationException(SR.GetResourceString(SR.ID0076));
+        }
+
+        return _service.ExecuteCommandAsync(
+            protocol         : endpoint.Protocol,
+            command          : OpenNettyCommands.Automation.Stop,
             address          : endpoint.Address,
             medium           : endpoint.Medium,
             mode             : null,

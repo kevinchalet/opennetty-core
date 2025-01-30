@@ -173,6 +173,24 @@ public sealed class OpenNettyMqttHostedService : BackgroundService, IOpenNettyHa
                 .Retry()
                 .SubscribeAsync(static arguments => ValueTask.CompletedTask),
 
+            await _events.ShutterPositionReported
+                .Where(static arguments => !string.IsNullOrEmpty(arguments.Endpoint.Name))
+                .Do(arguments => ReportStringAsync(arguments.Endpoint, OpenNettyMqttAttributes.ShutterPosition,
+                    arguments.Position.ToString(CultureInfo.InvariantCulture)))
+                .Retry()
+                .SubscribeAsync(static arguments => ValueTask.CompletedTask),
+
+            await _events.ShutterStateReported
+                .Where(static arguments => !string.IsNullOrEmpty(arguments.Endpoint.Name))
+                .Do(arguments => ReportStringAsync(arguments.Endpoint, OpenNettyMqttAttributes.ShutterState, arguments.State switch
+                {
+                    OpenNettyModels.Automation.ShutterState.Stopped => "stopped",
+                    OpenNettyModels.Automation.ShutterState.Up      => "open",
+                                        _                           => "closed"
+                }))
+                .Retry()
+                .SubscribeAsync(static arguments => ValueTask.CompletedTask),
+
             await _events.SmartMeterIndexesReported
                 .Where(static arguments => !string.IsNullOrEmpty(arguments.Endpoint.Name))
                 .Do(arguments => ReportJsonAsync(arguments.Endpoint, OpenNettyMqttAttributes.SmartMeterIndexes, new JsonObject()
@@ -209,6 +227,17 @@ public sealed class OpenNettyMqttHostedService : BackgroundService, IOpenNettyHa
                     OpenNettyModels.TemperatureControl.SmartMeterRateType.OffPeak => "off_peak",
 
                     _ => throw new InvalidDataException(SR.GetResourceString(SR.ID0075))
+                }))
+                .Retry()
+                .SubscribeAsync(static arguments => ValueTask.CompletedTask),
+
+            await _events.StopUpDownScenarioReported
+                .Where(static arguments => !string.IsNullOrEmpty(arguments.Endpoint.Name))
+                .Do(arguments => ReportStringAsync(arguments.Endpoint, OpenNettyMqttAttributes.Scenario, arguments.State switch
+                {
+                    OpenNettyModels.Automation.ShutterState.Stopped => "STOP",
+                    OpenNettyModels.Automation.ShutterState.Up      => "OPEN",
+                                        _                           => "CLOSE"
                 }))
                 .Retry()
                 .SubscribeAsync(static arguments => ValueTask.CompletedTask),

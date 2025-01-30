@@ -22,10 +22,6 @@ public interface IOpenNettyService
     /// <param name="address">The address, if applicable.</param>
     /// <param name="medium">The medium to use or <see langword="null"/> to use the default medium.</param>
     /// <param name="mode">The mode to use or <see langword="null"/> to use the default mode.</param>
-    /// <param name="filter">
-    /// The delegate called by the service to filter the returned dimensions.
-    /// If set to <see langword="null"/>, only the requested dimension is returned.
-    /// </param>
     /// <param name="gateway">The gateway used to send the message.</param>
     /// <param name="options">The transmission options to use.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
@@ -39,7 +35,6 @@ public interface IOpenNettyService
         OpenNettyAddress? address = null,
         OpenNettyMedium? medium = null,
         OpenNettyMode? mode = null,
-        Func<OpenNettyDimension, ValueTask<bool>>? filter = null,
         OpenNettyGateway? gateway = null,
         OpenNettyTransmissionOptions options = OpenNettyTransmissionOptions.None,
         CancellationToken cancellationToken = default);
@@ -106,10 +101,6 @@ public interface IOpenNettyService
     /// <param name="address">The address, if applicable.</param>
     /// <param name="medium">The medium to use or <see langword="null"/> to use the default medium.</param>
     /// <param name="mode">The mode to use or <see langword="null"/> to use the default mode.</param>
-    /// <param name="filter">
-    /// The delegate called by the service to filter the returned dimensions.
-    /// If set to <see langword="null"/>, only the requested dimension is returned.
-    /// </param>
     /// <param name="gateway">The gateway used to send the message.</param>
     /// <param name="options">The transmission options to use.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> that can be used to abort the operation.</param>
@@ -122,7 +113,6 @@ public interface IOpenNettyService
         OpenNettyAddress? address = null,
         OpenNettyMedium? medium = null,
         OpenNettyMode? mode = null,
-        Func<OpenNettyDimension, ValueTask<bool>>? filter = null,
         OpenNettyGateway? gateway = null,
         OpenNettyTransmissionOptions options = OpenNettyTransmissionOptions.None,
         CancellationToken cancellationToken = default);

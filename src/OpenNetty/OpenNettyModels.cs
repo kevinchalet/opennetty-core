@@ -37,6 +37,33 @@ public static class OpenNettyModels
     }
 
     /// <summary>
+    /// Automation models (WHO = 2).
+    /// </summary>
+    public static class Automation
+    {
+        /// <summary>
+        /// Shutter state.
+        /// </summary>
+        public enum ShutterState
+        {
+            /// <summary>
+            /// Stopped.
+            /// </summary>
+            Stopped = 0,
+
+            /// <summary>
+            /// Up.
+            /// </summary>
+            Up = 1,
+
+            /// <summary>
+            /// Down.
+            /// </summary>
+            Down = 2
+        }
+    }
+
+    /// <summary>
     /// Temperature control models (WHO = 4).
     /// </summary>
     public static class TemperatureControl
