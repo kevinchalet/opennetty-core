@@ -30,14 +30,8 @@ public class OpenNettyManager
     /// <returns>
     /// An <see cref="IAsyncEnumerable{T}"/> that can be used to iterate the devices registered in the options.
     /// </returns>
-    public virtual async IAsyncEnumerable<OpenNettyDevice> EnumerateDevicesAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await foreach (var device in _options.CurrentValue.Devices.ToAsyncEnumerable())
-        {
-            yield return device;
-        }
-    }
+    public virtual IAsyncEnumerable<OpenNettyDevice> EnumerateDevicesAsync(CancellationToken cancellationToken = default)
+        => _options.CurrentValue.Devices.ToAsyncEnumerable();
 
     /// <summary>
     /// Iterates all the endpoints registered in the options.
@@ -46,14 +40,8 @@ public class OpenNettyManager
     /// <returns>
     /// An <see cref="IAsyncEnumerable{T}"/> that can be used to iterate the endpoints registered in the options.
     /// </returns>
-    public virtual async IAsyncEnumerable<OpenNettyEndpoint> EnumerateEndpointsAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await foreach (var endpoint in _options.CurrentValue.Endpoints.ToAsyncEnumerable())
-        {
-            yield return endpoint;
-        }
-    }
+    public virtual IAsyncEnumerable<OpenNettyEndpoint> EnumerateEndpointsAsync(CancellationToken cancellationToken = default)
+        => _options.CurrentValue.Endpoints.ToAsyncEnumerable();
 
     /// <summary>
     /// Iterates all the gateways registered in the options.
@@ -62,14 +50,8 @@ public class OpenNettyManager
     /// <returns>
     /// An <see cref="IAsyncEnumerable{T}"/> that can be used to iterate the gateways registered in the options.
     /// </returns>
-    public virtual async IAsyncEnumerable<OpenNettyGateway> EnumerateGatewaysAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await foreach (var gateway in _options.CurrentValue.Gateways.ToAsyncEnumerable())
-        {
-            yield return gateway;
-        }
-    }
+    public virtual IAsyncEnumerable<OpenNettyGateway> EnumerateGatewaysAsync(CancellationToken cancellationToken = default)
+        => _options.CurrentValue.Gateways.ToAsyncEnumerable();
 
     /// <summary>
     /// Resolves a device using the specified name.
